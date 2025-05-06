@@ -26,7 +26,7 @@ pip install -r requirements.txt
 ## Data preparation
 
 Download NeRF synthetic dataset and add a link to the data directory. After preparation, you should have the following directory structure:
-We have provied the minimal `lego` dataset for you in the Github release page.
+We have provied the minimal `lego` dataset for you in the [Github release page](https://github.com/cxzhou35/nerf-replication/releases/tag/init).
 
 ```
 data/nerf_synthetic
@@ -134,7 +134,7 @@ python run.py --type evaluate --cfg_file configs/nerf/lego.yaml
 > Don't modify the model file.
 
 Considering that you are limited by the GPU memory, we provide a pretrained model for you to test the inference process.
-You can download the pretrained model from the Github release page and put in in the `data/trained_model` directory.
+You can download the pretrained model from the [Github release page](https://github.com/cxzhou35/nerf-replication/releases/tag/init) and put in in the `data/trained_model` directory.
 
 The pretrained model path should be like this: `data/trained_model/task_name/scene_name/exp_name/latest.pth`.
 
