@@ -46,6 +46,7 @@ train_dataset:
   split: "train"
   input_ratio: 1. # whether to downsampling the image, you can set it to 0.5 to acclerate training
   cams: [0, -1, 1] # input cameras, you can use this variable to select training images
+  #这个写法会被用作python切片，这里就是从0一直取到最后，也就是在训练时加载所有图像。
   H: 800
   W: 800
 
@@ -53,7 +54,7 @@ test_dataset:
   data_root: "data/nerf_synthetic"
   split: "test"
   input_ratio: 0.5
-  cams: [0, -1, 100]
+  cams: [0, -1, 100]  #在测试集里面，每100个抽取1个，而不是全部加载
   H: 800
   W: 800
 

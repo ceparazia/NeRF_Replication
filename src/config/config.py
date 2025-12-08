@@ -5,7 +5,7 @@ import numpy as np
 from . import yacs
 
 
-cfg = CN()
+cfg = CN()  #实例化了一个空的配置节点对象，并将其命名为全局配置对象 cfg
 
 # extract_mesh
 cfg.level = 32.0
