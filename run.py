@@ -9,6 +9,7 @@ def run_dataset():
     from src.datasets import make_data_loader
 
     cfg.train.num_workers = 0
+    # import ipdb; ipdb.set_trace()
     data_loader = make_data_loader(cfg, is_train=False)
     for batch in tqdm.tqdm(data_loader):
         pass
@@ -52,7 +53,7 @@ def run_evaluate():
     from src.models.nerf.renderer import make_renderer
     from src.utils.net_utils import load_network
 
-    print(f"trainde_model_dir: {cfg.trained_model_dir}")
+    print(f"trained_model_dir: {cfg.trained_model_dir}")
     network = make_network(cfg).cuda()
     load_network(
         network, cfg.trained_model_dir, resume=cfg.resume, epoch=cfg.test.epoch

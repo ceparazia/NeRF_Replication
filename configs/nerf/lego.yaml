@@ -13,6 +13,10 @@ evaluator_module: src.evaluators.nerf
 task_arg:
   N_rays: 1024 # number of rays in each batch
   chunk_size: 4096 # number of rays processed in parallel
+  # chunk_size是net里面一次处理的光线数
+  # 但是它没考虑到embed步骤就可能出现OOP
+  # 所以我在下面再引入了一个参数
+  pre_chunk_size: 8192 # ❗ 这是我自己加的。是渲染前手动对光线分块、传入net,避免embed的时候OOM
   white_bkgd: 1 # use white background
   N_samples: 64 # number of samples per ray in coarse network
   N_importance: 128 # number of samples per ray in fine network
@@ -53,7 +57,9 @@ train_dataset:
 test_dataset:
   data_root: "data/nerf_synthetic"
   split: "test"
+  # input_ratio: 0.5   # ❓我试了改成1.0，但是效果却不如0.5
   input_ratio: 0.5
+
   cams: [0, -1, 100]  #在测试集里面，每100个抽取1个，而不是全部加载
   H: 800
   W: 800
@@ -78,7 +84,11 @@ eval:
   whole_img: True
 
 ep_iter: 500 # number of iterations in each epoch
-save_ep: 40
+# save_ep: 40  # 每40次保存一次模型
+save_ep: 10  # 改为每10次保存一次模型
+
 eval_ep: 40 # 20000 iterations
-save_latest_ep: 10 # 5000 iterations
+# save_latest_ep: 10 # 5000 iterations
+save_latest_ep: 1   # 改为每个周期都记录最新模型
+
 log_interval: 10

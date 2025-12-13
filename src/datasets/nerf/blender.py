@@ -86,7 +86,7 @@ class Dataset(data.Dataset):
     
         self.frames=meta["frames"]
         a,b,c=self.cams
-        self.frames=self.frames[a:b:c]  #安装cfg中的cams进行切片
+        self.frames=self.frames[a:b:c]  #按照cfg中的cams进行切片
         self.len=len(self.frames) #这是图片的总数N
 
         camera_angle_x=meta["camera_angle_x"]
@@ -107,7 +107,7 @@ class Dataset(data.Dataset):
         for frame in self.frames:
             img_path=os.path.join(self.root,frame["file_path"]+'.png')
             img=Image.open(img_path)  #这是一个PIL.Image.Image 类型的对象
-            #print(img.mode)   #应当是RGBA
+            # print(img.mode)   #应当是RGBA
 
             if self.ratio!=1:
                 img=img.resize([self.W,self.H],resample=Image.Resampling.LANCZOS)
@@ -118,7 +118,7 @@ class Dataset(data.Dataset):
 
             c2w=torch.tensor(frame["transform_matrix"]).float()  #(4,4)
             rays_o,rays_d=_get_rays(self.H,self.W,self.K,c2w)  #两个都是(HW,3)
-            # 一张图片中所有像素对应的一共HW条光线，每条光线有一个长度3的位置向量o和长度3的方向向量d
+            # 一张图片中所有HW个像素对应的一共HW条光线，每条光线有一个长度3的位置向量o和长度3的方向向量d
 
             all_rays_o.append(rays_o)
             all_rays_d.append(rays_d)
@@ -151,28 +151,36 @@ class Dataset(data.Dataset):
         Write your codes here.
         """
 
-        num_rays_total=self.rays_o.shape[0]  #就是NHW
+        num_rays_total=self.rays_o.shape[0]  #训练模式下是NHW
 
         if self.is_train:
-            sample_idx=torch.randint(0,num_rays_total,self.n_rays)   #从所有图片的所有像素对应的总共NHW条光线里面随机选1024条
+            sample_idx=torch.randint(0,num_rays_total,size=(self.n_rays,))   #从所有图片的所有像素对应的总共NHW条光线里面随机选1024条
             rays_o=self.rays_o[sample_idx]  #(1024,3)
             rays_d=self.rays_d[sample_idx]  #(1024,3)
             rgbs=self.rgbs[sample_idx]  #(1024,3)
-            return rays_o,rays_d,rgbs
+            return {
+                "rays_o":rays_o,
+                "rays_d":rays_d,
+                "rgbs":rgbs
+                }     # 这里必须返回字典，不能用元组。因为后面训练的框架期望从Dataset的getitem得到的就是字典
 
         else:   #测试模式
             rays_o=self.rays_o[index]  #(H,W,3)
             rays_d=self.rays_d[index]  #(H,W,3)
             rgbs=self.rgbs[index]  #(H,W,3)
-            return rays_o.reshape(-1,3),rays_d.reshape(-1,3),rgbs.reshape(-1,3)
-            #(HW,3)  (HW,3)  (HW,3)
+            return {
+                "rays_o":rays_o.reshape(-1,3),  #(HW,3)
+                "rays_d":rays_d.reshape(-1,3),  #(HW,3)
+                "rgbs":rgbs.reshape(-1,3)  #(HW,3)
+                }
+            
 
 
 
     def __len__(self):
         """
         Description:
-            __len__ 函数返回训练或者测试的数量
+            __len__ 函数返回训练或者测试的数量（即可迭代次数。对于train模式而言是NHW条光线大杂烩，对于test模式是N张图片）
 
         Input:
             None

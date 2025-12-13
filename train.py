@@ -21,6 +21,7 @@ import torch.distributed as dist
 import os
 
 torch.autograd.set_detect_anomaly(True)
+# 训练过程中，如果出现梯度计算异常(如NaN)，会打印详细的错误信息，
 
 if cfg.fix_random:
     torch.manual_seed(0)

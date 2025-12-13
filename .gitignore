@@ -5,6 +5,8 @@ lego.zip
 *.png
 *.pyc
 *.out
+wget-log
+*.sh
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

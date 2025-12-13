@@ -206,28 +206,31 @@ class Network(nn.Module):
         else:
             fn = self.model
 
+
+        # inputs (N_rays,N_samples,3)
+        # viewdirs (N_rays,3)
         inputs_flat = torch.reshape(inputs, [-1, inputs.shape[-1]])
         # inputs 是沿着光线采样的采样点的 3D 坐标x，形状为(N_rays,N_samples,3)
         # 为了送入MLP，需要将其展平为(N_rays*N_samples,3)
-        embedded = self.embed_fn(inputs_flat)  # 3D向量x -> 位置编码后的高维特征向量x'，长度input_ch
+        embedded = self.embed_fn(inputs_flat)  # 3D向量x -> 位置编码后的高维特征向量x'，特征维度长为input_ch
         # (N_rays*N_samples , input_ch)
 
 
         if self.use_viewdirs:
             # viewdirs的形状是(N_rays,3)
-            input_dirs = viewdirs[:, None].expand(inputs.shape)
+            input_dirs = viewdirs[:, None].expand(inputs.shape)            # 一条光线上的所有采样点的方向是相同的
             # 将每条光线的方向信息，扩展到该光线上的每个采样点，再展平
-            # viewdirs[:, None]是(N_rays,1,3)
+            # viewdirs[:,None]是(N_rays,1,3)
             # input_dirs是(N_rays,N_samples,3)
             input_dirs_flat = torch.reshape(input_dirs, [-1, input_dirs.shape[-1]])
             # 展平成(N_rays*N_samples,3)
-            embedded_dirs = self.embeddirs_fn(input_dirs_flat)  # d -> d',长度input_ch_views
+            embedded_dirs = self.embeddirs_fn(input_dirs_flat)  # d -> d',特征维度长度从3变为input_ch_views
             # 然后进行位置编码，为 NeRF 模型输入做准备
             embedded = torch.cat([embedded, embedded_dirs], -1)
             # 拼接x'和d',得到(N_rays*N_samples , input_ch+input_ch_views)
 
 
-        # embeddded就是要喂给NeRF的完整输入
+        # embeddded就是要喂给NeRF的完整输入(x'+d')
         embedded = embedded.to(torch.float32)
         outputs_flat = self.batchify(fn, self.chunk)(embedded)
         # 把输入分块，喂给NeRF，再把结果拼起来，得到outputs_flat，形状是(N,4)。此处N=N_rays*N_samples
