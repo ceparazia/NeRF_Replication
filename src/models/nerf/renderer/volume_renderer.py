@@ -20,12 +20,14 @@ class Renderer:
         self.pre_chunk_size=cfg.task_arg.pre_chunk_size
         self.perturb= cfg.task_arg.perturb
         self.lindisp= cfg.task_arg.lindisp
+        self.double_chunk_coarse=cfg.task_arg.double_chunk_coarse
+        self.double_chunk_fine=cfg.task_arg.double_chunk_fine
 
 
         self.model=net.model.to(self.device)  #必须显式地指定设备，否则模型的所有参数默认是存在CPU中的
         self.model_fine=net.model_fine.to(self.device)
 
-        self.t_near=getattr(cfg.task_arg,"t_near",0.0)
+        self.t_near=getattr(cfg.task_arg,"t_near",2.0)
         self.t_far=getattr(cfg.task_arg,"t_far",6.0)  # ❓我在cfg里没看到这两个设定。AI说一般取0.0和6.0
 
 
@@ -48,6 +50,9 @@ class Renderer:
         # 如果perturb==False，那么这已经是采样结果了
         # 如果perturb==True，需要再在这样的栅栏区间内随机取点
         
+
+        # ❓ 或许应该先扩展t，再生成(N_rays,N_samples)形状的随机矩阵tau2?
+        # 但是那样会引入过多计算开销
         mids=(t[1:]+t[:-1])/2   #(N_samples-1,)   存储了所有栅栏区间的中点
         if perturb:
             upper=torch.cat([mids,t[-1:]],dim=-1)  # (N_samples,)
@@ -154,8 +159,10 @@ class Renderer:
         idx_cdf=torch.stack([lower,upper],dim=-1)
         # (N_rays,N_importance,2)  # 取值[0,64]
 
-        lower=torch.clamp(idx-1, min=0, max=N_samples-2)  # 取值[0,62]
-        upper=torch.clamp(idx,   max=N_samples-2)  # 取值[1,62]
+
+        # ⭐ 与cdf_i对应的bins索引是bins_{i-1}
+        lower=torch.clamp(idx-2, min=0, max=N_samples-2)  # 取值[0,62]
+        upper=torch.clamp(idx-1, min=0, max=N_samples-2)  # 取值[1,62]
         idx_bins=torch.stack([lower,upper],dim=-1)
         # (N_rays,N_importance,2)  # 取值[0,62]
 
@@ -204,22 +211,28 @@ class Renderer:
         # pts是光线上的粗采样点
 
 
-        # net里面本身会以self.chunk对光线进行分块处理，避免OOM错误
-        # 但是所有光线上的所有采样点传入net之后，在embed步骤就会触发OOM了
-        # 所以必须双重分块。在传入net之前就手动分块一次
-        raw_list=[]
-        for i in range(0,N_rays,self.pre_chunk_size):
-            pts_chunk=pts[i:i+self.pre_chunk_size]  # (chunk,N_samples,3)
-            rays_d_chunk=rays_d[i:i+self.pre_chunk_size]  # (chunk,3)
-            # 取出了chunk条光线送入net，避免embed的时候OOM
-            raw_chunk=self.net(pts_chunk,rays_d_chunk,model="coarse")
-            # (chunk,N_samples,4)
-            raw_list.append(raw_chunk)
-
 
         N_rays,N_samples,_=pts.shape
-        raw=torch.cat(raw_list,dim=0).reshape(N_rays,N_samples,4)
-        # (N_rays,N_sample,4)，得到了每条光线、每个采样点对应的σ和c
+
+
+        if self.double_chunk_coarse:
+            # net里面本身会以self.chunk对光线进行分块处理，避免OOM错误
+            # 但是所有光线上的所有采样点传入net之后，在embed步骤就会触发OOM了
+            # 所以必须双重分块。在传入net之前就手动分块一次
+            raw_list=[]
+            for i in range(0,N_rays,self.pre_chunk_size):
+                pts_chunk=pts[i:i+self.pre_chunk_size]  # (chunk,N_samples,3)
+                rays_d_chunk=rays_d[i:i+self.pre_chunk_size]  # (chunk,3)
+                # 取出了chunk条光线送入net，避免embed的时候OOM
+                raw_chunk=self.net(pts_chunk,rays_d_chunk,model="coarse")
+                # (chunk,N_samples,4)
+                raw_list.append(raw_chunk)
+            raw=torch.cat(raw_list,dim=0).reshape(N_rays,N_samples,4)
+            # (N_rays,N_sample,4)，得到了每条光线、每个采样点对应的σ和c
+        else:
+            raw=self.net(pts,rays_d,model="coarse")
+        
+        
         C,D,weights=self._raw2output(raw,t_coarse,rays_d,white_bkgd=self.white_bkgd)
         # 这个C,D是粗采样结果
         ret={"C_coarse":C,
@@ -247,17 +260,24 @@ class Renderer:
 
         N_rays,N_sam_imp,_=pts_fine.shape        
 
-        raw_fine_list=[]
-        for i in range(0,N_rays,self.pre_chunk_size):
-            pts_chunk=pts_fine[i:i+self.pre_chunk_size]  # (chunk,N_sam_imp,3)
-            rays_d_chunk=rays_d[i:i+self.pre_chunk_size]  # (chunk,3)
-            # 取出了chunk条光线送入net，避免embed的时候OOM
-            raw_chunk=self.net(pts_chunk,rays_d_chunk,model="fine")
-            # (chunk,N_samples,4)
-            raw_fine_list.append(raw_chunk)
 
-        raw_fine=torch.cat(raw_fine_list,dim=0).reshape(N_rays,N_sam_imp,4)
-        # (N_rays,N_samples+N_importance,4)，得到了每条光线、每个采样点对应的σ和c
+
+        if self.double_chunk_fine:
+            raw_fine_list=[]
+            for i in range(0,N_rays,self.pre_chunk_size):
+                pts_chunk=pts_fine[i:i+self.pre_chunk_size]  # (chunk,N_sam_imp,3)
+                rays_d_chunk=rays_d[i:i+self.pre_chunk_size]  # (chunk,3)
+                # 取出了chunk条光线送入net，避免embed的时候OOM
+                raw_chunk=self.net(pts_chunk,rays_d_chunk,model="fine")
+                # (chunk,N_samples,4)
+                raw_fine_list.append(raw_chunk)
+            raw_fine=torch.cat(raw_fine_list,dim=0).reshape(N_rays,N_sam_imp,4)
+            # (N_rays,N_samples+N_importance,4)，得到了每条光线、每个采样点对应的σ和c
+        else:
+            raw_fine=self.net(pts_fine,rays_d,model="fine")
+        
+        
+        
         C_fine,D_fine,weights_fine=self._raw2output(raw_fine,t_combine,rays_d,white_bkgd=self.white_bkgd)
         ret["C_fine"]=C_fine
         ret["D_fine"]=D_fine

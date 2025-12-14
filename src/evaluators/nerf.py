@@ -1,6 +1,7 @@
 import numpy as np
 from src.config import cfg
 import os
+import torch
 import torch.nn.functional as F
 from skimage.metrics import structural_similarity as compare_ssim
 import cv2
@@ -31,7 +32,7 @@ class Evaluator:
         cv2.imwrite(
             "{}/view{:03d}_pred.png".format(result_dir, id),
             (img_pred[..., [2, 1, 0]] * 255),
-        )
+        )   # cv2需要的是BGR格式，要从RGB转换一下
         cv2.imwrite(
             "{}/view{:03d}_gt.png".format(result_dir, id),
             (img_gt[..., [2, 1, 0]] * 255),
@@ -46,7 +47,8 @@ class Evaluator:
                             img_gt, 
                             win_size=101, 
                             full=True,
-                            channel_axis=2)  # ❗ 这一个参数是我自己加的。显式地指定颜色轴，防止报错
+                            channel_axis=2,  # ❗ 这一个参数是我自己加的。显式地指定颜色轴，防止报错
+                            data_range=255)   # ❗ 这一个参数是我自己加的。显式地设置传入的数据范围
         return ssim  # ssim越接近1越好，表示预测图像与真实图像在结构上越相似
 
     def evaluate(self, output, batch):
@@ -62,8 +64,6 @@ class Evaluator:
         img_pred=img_pred.detach().cpu().numpy()  # 先切断梯度追踪，再移到CPU，用于后续的numpy操作
         img_gt=img_gt.detach().cpu().numpy()
 
-        mse=np.mean((img_pred-img_gt)**2)   # 这是一个标量
-        self.mse.append(mse)
         self.imgs.append(
             {  
             "img_pred":img_pred,   # (N_rays,3)
@@ -103,6 +103,10 @@ class Evaluator:
             img_pred_1=all_pred[start:end].reshape(H,W,3)
             img_gt_1=all_gt[start:end].reshape(H,W,3)
 
+
+            img_mse=np.mean((img_pred_1-img_gt_1)**2)   # 这是一个标量
+            self.mse.append(img_mse)
+
             final_psnr=self.psnr_metric(img_pred_1,img_gt_1)
             self.psnr.append(final_psnr)
 
@@ -132,12 +136,20 @@ class Evaluator:
 
 
         ret={
-            "psnr_list":self.psnr,
-            "ssim_list":self.ssim,
-            "avg_mse":avg_mse
+            "Average PSNR(dB)": torch.tensor(avg_psnr,dtype=torch.float32),
+            "Average SSIM: ": torch.tensor(avg_ssim,dtype=torch.float32),
+            "Average MSE: ": torch.tensor(avg_mse,dtype=torch.float32),
+            # 显式地转化成0D的变量tensor。如果直接传的话，后续写入tensorboard会报错
+
+            "PSNR_list": torch.tensor(self.psnr,dtype=torch.float32),
+            "SSIM_list": torch.tensor(self.ssim,dtype=torch.float32),
+            "MSE_list": torch.tensor(self.mse,dtype=torch.float32)
+            # 把列表显式地转化成1D的变量tensor，准备写入tensorboard
         }
 
         self.mse=[]
+        self.psnr=[]
+        self.ssim=[]
         self.imgs=[]
 
         return ret
