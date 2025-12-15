@@ -2,6 +2,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from src.config import cfg
+from src.models.nerf.renderer import build_occupancyQ
+import os
 
 class Renderer:
     def __init__(self, net):
@@ -22,6 +24,32 @@ class Renderer:
         self.lindisp= cfg.task_arg.lindisp
         self.double_chunk_coarse=cfg.task_arg.double_chunk_coarse
         self.double_chunk_fine=cfg.task_arg.double_chunk_fine
+        
+        self.use_ERT= cfg.task_arg.use_ERT   # ❓ 应该设置成训练模式禁用ERT，测试模式使用ERT
+        self.ERT_threshold= cfg.task_arg.ERT_threshold
+
+
+        self.use_ESS= cfg.task_arg.use_ESS
+        if self.use_ESS:
+            occ_filename=cfg.task_arg.occ_filename
+            save_dir="data/Q_occ_grid for ESS/"
+            occ_path=os.path.join(save_dir,f"{occ_filename}.pth")
+            try:
+                self.occ_grid=torch.load(occ_path).to(self.device)
+                print(f"使用ESS。加载已有的occupancy grid:{occ_filename}.pth")
+            except FileNotFoundError:
+                print(f"使用ESS。但是未找到{occ_filename}.pth")
+                print(f"正在生成{occ_filename}.pth")
+                build_occupancyQ.build_occupancy(net)
+
+                try:
+                    self.occ_grid=torch.load(occ_path).to(self.device)
+                    print(f"生成完毕。已加载{occ_filename}.pth")
+                except FileNotFoundError:
+                    print(f"生成失败。禁用ESS")
+
+            if self.occ_grid==None:
+                self.use_ESS=False
 
 
         self.model=net.model.to(self.device)  #必须显式地指定设备，否则模型的所有参数默认是存在CPU中的
@@ -40,40 +68,45 @@ class Renderer:
         # rays_o,rays_d都是(N_rays,3)
         N_rays=rays_o.shape[0]
 
-        tau=torch.linspace(0.0 , 1.0, N_samples,device=self.device)
-        if lindisp==True:
-            tmp=tau*(1/self.t_far)+(1-tau)*(1/self.t_near)
-            t=1/tmp
+
+        if self.use_ESS:
+            pass  # 会需要用到self.occ_grid
+
         else:
-            t=tau*self.t_far+(1-tau)*self.t_near   
-            # 共(N_samples,)个点，从t_far均匀到t_near均匀分布，“栅栏区间”
-        # 如果perturb==False，那么这已经是采样结果了
-        # 如果perturb==True，需要再在这样的栅栏区间内随机取点
-        
+            tau=torch.linspace(0.0 , 1.0, N_samples,device=self.device)
+            if lindisp==True:
+                tmp=tau*(1/self.t_far)+(1-tau)*(1/self.t_near)
+                t=1/tmp
+            else:
+                t=tau*self.t_far+(1-tau)*self.t_near   
+                # 共(N_samples,)个点，从t_far均匀到t_near均匀分布，“栅栏区间”
+            # 如果perturb==False，那么这已经是采样结果了
+            # 如果perturb==True，需要再在这样的栅栏区间内随机取点
+            
 
-        # ❓ 或许应该先扩展t，再生成(N_rays,N_samples)形状的随机矩阵tau2?
-        # 但是那样会引入过多计算开销
-        mids=(t[1:]+t[:-1])/2   #(N_samples-1,)   存储了所有栅栏区间的中点
-        if perturb:
-            upper=torch.cat([mids,t[-1:]],dim=-1)  # (N_samples,)
-            lower=torch.cat([t[:1],mids],dim=-1) # (N_samples,)
+            # ❓ 或许应该先扩展t，再生成(N_rays,N_samples)形状的随机矩阵tau2?
+            # 但是那样会引入过多计算开销
+            mids=(t[1:]+t[:-1])/2   #(N_samples-1,)   存储了所有栅栏区间的中点
+            if perturb:
+                upper=torch.cat([mids,t[-1:]],dim=-1)  # (N_samples,)
+                lower=torch.cat([t[:1],mids],dim=-1) # (N_samples,)
 
-            #在每个区间 [lower, upper] 内随机均匀采样
-            tau2=torch.rand(N_samples,device=self.device)  # 0.0到1.0之间
-            t=lower+tau2*(upper-lower)  # (N_samples,)
+                #在每个区间 [lower, upper] 内随机均匀采样
+                tau2=torch.rand(N_samples,device=self.device)  # 0.0到1.0之间
+                t=lower+tau2*(upper-lower)  # (N_samples,)
 
-        # 采样仅仅由t_near, t_far, N_samples决定，与具体的光线无关
-        # 因此可以让所有光线共享同一组深度值t
-        # 扩展到每一条光线
-        t=t.expand([N_rays,N_samples])  # (N_rays,N_samples)
-        t_1=t.unsqueeze(dim=-1)  # (N_rays,N_samples,1)
+            # 采样仅仅由t_near, t_far, N_samples决定，与具体的光线无关
+            # 因此可以让所有光线共享同一组深度值t
+            # 扩展到每一条光线
+            t=t.expand([N_rays,N_samples])  # (N_rays,N_samples)
+            t_1=t.unsqueeze(dim=-1)  # (N_rays,N_samples,1)
 
-        # import ipdb; ipdb.set_trace()
-        pts=rays_o[:,None]+t_1*rays_d[:,None]
-        # 所有光线共享同一组深度值，但是每条光线的rays_d向量不同
-        # rays_o[:,None]是(N_rays, 1, 3)
-        # pts是采样点的三维坐标，形状(N_rays,N_samples,3)
-        
+            # import ipdb; ipdb.set_trace()
+            pts=rays_o[:,None]+t_1*rays_d[:,None]
+            # 所有光线共享同一组深度值，但是每条光线的rays_d向量不同
+            # rays_o[:,None]是(N_rays, 1, 3)
+            # pts是采样点的三维坐标，形状(N_rays,N_samples,3)
+            
         return pts,t
         # (N_rays,N_samples,3)    (N_rays,N_samples)
 
@@ -98,16 +131,27 @@ class Renderer:
         deltas=deltas*rays_d_norm # (N_rays,N_samples)
 
 
-        c=torch.sigmoid(raw[:,:,:3])  # (N_rays, N_samples, 4) 保证值在[0,1]之间
+        c=torch.sigmoid(raw[:,:,:3])  # (N_rays, N_samples, 3) 保证值在[0,1]之间
         sigma=F.relu(raw[:,:,3])  #(N_rays, N_samples) 保证体密度非负
 
         tmp=torch.exp(-sigma*deltas)  #(N_rays, N_samples)
         tmp_start=torch.ones([N_rays,1],device=self.device)
         tmp=torch.cat([tmp_start,tmp[:,:-1]],dim=-1)   # (N_rays, N_samples)
-        T=torch.cumprod(tmp,dim=-1)  # 使用累乘得到光线在这个点的透过率
+        T=torch.cumprod(tmp,dim=-1)  # T就是“到达这个点还有多少光”
+        # T是从1递减到0的
 
         weights=T*(1-torch.exp(-sigma*deltas))  # (N_rays, N_samples)
-        # weights越大，表示这个采样点越可能是物体表面
+        # weights越大，表示这个采样点将对最终渲染出来的RGB的贡献越大
+
+
+        if self.use_ERT:
+            mask= T<self.ERT_threshold  # (N_rays, N_samples) bool型
+            mask= mask.int()
+            mask= mask.cumsum(dim=1)  # 虽然T_i应当是递减的，但是可能出现浮点数精度温度。
+            # 使用累加，确保若T_i<阈值了，则后面所有点的T都要被terminate
+            discard_mask=(mask>0)  # (N_rays, N_samples) bool型
+            weights[discard_mask]=0.0
+
         C=(weights[:,:,None]*c).sum(dim=1)  # 最终的像素颜色C(r)    (N_rays,3)
         D=(weights*t).sum(dim=-1)  # depthmap D(r)    (N_rays)
 
