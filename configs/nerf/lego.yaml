@@ -11,35 +11,35 @@ loss_module: src.train.trainers.nerf
 evaluator_module: src.evaluators.nerf
 
 task_arg:
-  N_rays: 1024 # number of rays in each batch
+  N_rays: 1024 # number of rays in each batch   默认值1024  这是训练时候一次取出的光线数。不影响测试时候的性能
   chunk_size: 4096 # number of rays processed in parallel
+  # 这是网络内部的分块大小，我用不到
   # chunk_size: 256
   # chunk_size是net里面一次处理的光线数
-  # 但是它没考虑到embed步骤就可能出现OOP
-  # 所以我在下面再引入了3个参数
-  double_chunk_coarse: True    # ❗ 这是我自己加的。True表示在渲染前手动对光线分块、传入net
-  double_chunk_fine: True  # ❗ 这是我自己加的
-  # pre_chunk_size: 16384 # ❗ 这是我自己加的。是渲染前手动对光线分块、传入net,避免embed的时候OOM
-  pre_chunk_size: 65536
-  # pre_chunk_size: 256
-  # pre_chunk_size的大小应当对渲染质量没影响，但是会影响渲染速度
+
+  # rays_chunk_size: 16384 # ❗ 这是我自己加的。是渲染前手动对光线分块、传入net,避免embed的时候OOM
+  rays_chunk_size: 65536
+  # 这个大小对渲染质量没影响，但是会影响渲染速度
 
 
   # ❗下面的ERT和ESS相关参数是我自己加的
-  use_ERT: True   # ❓ kilo论文是仅在测试时使用ERT。但是
-  # use_ERT: False   # ❓ kilo论文是仅在测试时使用ERT。但是
-  ERT_threshold: 1e-4
+  use_ERT: True
+  ERT_threshold: 6e-2   # 阈值取[0.05,0.07]区间内的值，可以在保证PSNR大于30的情况下做到最快
+  # 如果取1e-1可以进一步加速，但是PSNR会下降为29点多。如果取1e-1以上，图像质量会明显下降
+  ERT_chunk: 8   # 测试发现取8，16，32的加速效果比较好。大于32后，提速效果下降了
 
 
   use_ESS: True
+  force_gen_occ_grid: False  # 强制重新生成occ_grid
   occ_filename: "occupancy_Q"
   occ_res: [128,128,128]  # Occupancy grid将有128^3个体素
+  # occ_res: [256,256,256]
   voxel_sample: [3,3,3]   # 每个体素内采集[3,3,3]共27个点，判断这个体素是否被占据
   occ_threshold: 1e-4  # 一个体素中若有1个点的σ达到阈值，就认为这个体素是被占据的
   AABB_min: [-2.0, -2.0, -2.0]
   AABB_max: [2.0 ,  2.0,  2.0]
   voxel_chunk: True  # 分块处理体素来构建occupancy grid，避免OOM
-  voxel_chunk_size: 1024
+  voxel_chunk_size: 65536
 
 
 
@@ -47,9 +47,22 @@ task_arg:
 
   
   white_bkgd: 1 # use white background
-  N_samples: 64 # number of samples per ray in coarse network
-  N_importance: 128 # number of samples per ray in fine network
-  # N_importance: 512 # 改成512之后PSNR没有明显上升。耗时多了很多
+
+  N_samples: 64 # number of samples per ray in coarse network     默认值 64
+  # 在开启ESS的情况下，减小N_samples可以提速，但是N_samples小于48就会导致PSNR低于30.
+  # 若取N_samples=16，会出现部分三维结构残缺，PSNR在28.5左右
+  # 若取N_samples=16，会出现明显的部分三维结构缺失，PSNR在24左右
+
+  N_importance: 128 # number of samples per ray in fine network  默认值是128
+  # 在开启ESS的情况下，减小N_importance可以提速
+  # N_importance越小提速越明显，而且图像质量的下降是可接受的
+  # N_importance取128时PSNR是30.01  fps=0.9769
+  # N_importance取64时PSNR是29.95   fps=1.7929
+  # N_importance取32时PSNR是29.72   fps=2.6540
+  # N_importance取16时PSNR是29.08   fps=3.4382  如果要保住29的PSNR，这大概是极限了
+
+
+
   no_batching: True # True for synthetic datasets
   use_viewdirs: True # whether use full 5D input instead of 3D
   lindisp: False
@@ -91,7 +104,7 @@ test_dataset:
   # input_ratio: 1.0  # 改成1.0可以提高渲染质量，但是会慢很多
 
   # cams: [0, -1, 100]  #在测试集里面，每100个抽取1个，而不是全部加载
-  cams: [0, -1, 50]  # 我改成每20个视角抽取1个.这样可以渲染出10张图片
+  cams: [0, -1, 50]  # 每20个视角抽取1个.这样可以渲染出10张图片
   H: 800
   W: 800
 

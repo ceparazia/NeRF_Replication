@@ -40,7 +40,7 @@ def _get_rays(H,W,K,c2w):
     rays_o=t.expand([H,W,3])  #(H,W,3)  这是相机在真实世界的坐标，要扩展到(H,W,3)
 
     rays_o=rays_o.reshape(-1,3)  #(HW,3)
-    rays_d=rays_d.reshape(-1,3)  #(HW,3)
+    rays_d=rays_d.reshape(-1,3)  #(HW,3) ❗这个方向向量没有归一化！
 
     return rays_o,rays_d
 
